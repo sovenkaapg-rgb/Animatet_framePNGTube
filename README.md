@@ -1,7 +1,7 @@
 # Animatet_framePNGTube
 ПНГтуб  штука  с уклоном в покадровую анимацию  и громкость микрофона 
 
-
+https://github.com/user-attachments/assets/309da0a9-0cb9-44a1-a399-31b4235d778d
 
 # Покадровая Студия (Frame PNGTuber)
 

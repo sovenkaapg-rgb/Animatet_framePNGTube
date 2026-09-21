@@ -5,7 +5,6 @@ from config_manager import config
 import os
 import math
 
-
 class AvatarRenderer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -21,7 +20,7 @@ class AvatarRenderer(QWidget):
         
         # Счётчики кадров
         self._blink_frame = 0
-        self._anim_frame = 0
+        self._anim_frame = 0  # Теперь крутится по кругу: 0 -> 1 -> 2 -> 0
         
         # Парение (отключено)
         self.hover_enabled = False
@@ -35,16 +34,24 @@ class AvatarRenderer(QWidget):
         # Настройки анимации эффектов (3 кадра)
         self.active_effect_layers = {}
         self.effect_frame = 0
-        self.effect_play_type = "loop"  # loop или once
+        self.effect_play_type = "loop"  
         self.effect_timer = QTimer()
         self.effect_timer.timeout.connect(self._on_effect_tick)
-        self.effect_timer.setInterval(200)  # скорость по умолчанию
-        
+        self.effect_timer.setInterval(200)  
         self.sync_timer_speeds()
+
+    def update_avatar_idle_speed(self, ms):
+        """Мгновенно обновляет скорость анимации покоя (Idle) аватара и перезапускает таймер"""
+        if ms <= 0: 
+            return
+        self._anim_timer.setInterval(ms)
+        if self._anim_timer.isActive():
+            self._anim_timer.stop()
+        self._anim_timer.start()
 
     def sync_timer_speeds(self):
         blink_ms = config.blink_frequency
-        anim_ms = config.idle_speed
+        anim_ms = config.idle_speed 
         self._blink_timer.setInterval(blink_ms)
         self._anim_timer.setInterval(anim_ms)
         if not self._blink_timer.isActive():
@@ -52,9 +59,63 @@ class AvatarRenderer(QWidget):
         if not self._anim_timer.isActive():
             self._anim_timer.start()
 
-    def set_effect_speed(self, ms):
-        """Меняет скорость анимации эффекта (вызывается из ползунка)"""
+    def set_effect_fps(self, fps):
+        """Переводит FPS в миллисекунды и обновляет интервал таймера"""
+        if fps <= 0: return
+        ms = int(1000 / fps)  
         self.effect_timer.setInterval(ms)
+        if self.active_effect_layers and not self.effect_timer.isActive():
+            self.effect_timer.start()
+
+    def _on_effect_tick(self):
+        """Проигрывание эффекта по кругу: 1 -> 2 -> 3 -> 1..."""
+        if not self.active_effect_layers:
+            self.effect_timer.stop()
+            self.current_live_fx_path = None 
+            return
+        self.effect_frame = (self.effect_frame + 1) % 3
+        key = f"fx_{self.effect_frame + 1}"
+        self.current_live_fx_path = self.active_effect_layers.get(key)
+        self.update()
+
+    def paintEvent(self, event):
+        from PyQt6.QtGui import QPainter, QPixmap
+        from PyQt6.QtCore import Qt, QRect
+        painter = QPainter(self)
+        
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        
+        render_rect = self.rect()
+        
+        # 1. Отрисовка аватара
+        avatar_pixmap = self._get_current_pixmap()
+        if avatar_pixmap and not avatar_pixmap.isNull():
+            scaled_avatar = avatar_pixmap.scaled(
+                self.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation
+            )
+            x = (self.width() - scaled_avatar.width()) // 2
+            y = (self.height() - scaled_avatar.height()) // 2
+            render_rect = QRect(x, y, scaled_avatar.width(), scaled_avatar.height())
+            painter.drawPixmap(render_rect, scaled_avatar)
+                    
+        # 2. Отрисовка цикличного эффекта поверх аватара
+        fx_pixmap = self._get_current_effect_pixmap()
+        if (not fx_pixmap or fx_pixmap.isNull()) and hasattr(self, 'current_live_fx_path') and self.current_live_fx_path:
+            if os.path.exists(self.current_live_fx_path):
+                fx_pixmap = QPixmap(self.current_live_fx_path)
+
+        if fx_pixmap and not fx_pixmap.isNull():
+            scaled_fx = fx_pixmap.scaled(
+                render_rect.size(),
+                Qt.AspectRatioMode.IgnoreAspectRatio, 
+                Qt.TransformationMode.SmoothTransformation
+            )
+            painter.drawPixmap(render_rect, scaled_fx)
+                        
+        painter.end()
 
     def _on_blink(self):
         self._blink_frame = 1
@@ -67,7 +128,9 @@ class AvatarRenderer(QWidget):
         self.update()
 
     def _on_anim_tick(self):
-        self._anim_frame = (self._anim_frame + 1) % 2
+        # БАГ ИСПРАВЛЕН: Теперь счетчик корректно идет по кругу: 0 -> 1 -> 2 -> 0
+        # Это позволяет отображать все 3 кадра анимации покоя (Idle)
+        self._anim_frame = (self._anim_frame + 1) % 3
         self.update()
 
     def _on_hover_tick(self):
@@ -79,58 +142,10 @@ class AvatarRenderer(QWidget):
             self._hover_phase = 0
         self._hover_offset = math.sin(math.radians(self._hover_phase)) * self.hover_amplitude
         self.update()
-        
-    def _on_effect_tick(self):
-        """Проигрывание эффекта по кругу: 1 -> 2 -> 3 -> 1..."""
-        if not self.active_effect_layers:
-            self.effect_timer.stop()
-            return
-        
-        self.effect_frame = (self.effect_frame + 1) % 3
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
-
-        is_stream = hasattr(self.window(), 'is_stream_mode') and self.window().is_stream_mode
-        if not is_stream:
-            painter.fillRect(self.rect(), QColor(30, 30, 30))
-
-        # Включаем стандартный режим наложения слоёв с прозрачностью
-        painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceOver)
-
-        # 1. Рисуем БАЗОВЫЙ АВАТАР персонажа
-        pixmap = self._get_current_pixmap()
-        if pixmap and not pixmap.isNull():
-            scaled = pixmap.scaled(
-                self.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            x = (self.width() - scaled.width()) // 2
-            y = (self.height() - scaled.height()) // 2
-            painter.drawPixmap(x, y, scaled)
-            
-        # 2. Поверх рисуем КАДР ЭФФЕКТА (если мы в режиме настройки или триггер сработал)
-        effect_pixmap = self._get_current_effect_pixmap()
-        if effect_pixmap and not effect_pixmap.isNull():
-            scaled_eff = effect_pixmap.scaled(
-                self.size(),
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation
-            )
-            ex = (self.width() - scaled_eff.width()) // 2
-            ey = (self.height() - scaled_eff.height()) // 2
-            painter.drawPixmap(ex, ey, scaled_eff)
-            
-        painter.end()
 
     def _get_current_effect_pixmap(self):
-        # Если мы редактируем эффект в приложении, принудительно крутим таймер для превью
         if self.active_effect_layers and not self.effect_timer.isActive():
             self.effect_timer.start()
-
         key = f"fx_{self.effect_frame + 1}"
         path = self.active_effect_layers.get(key)
         if path and os.path.exists(path):
@@ -139,14 +154,13 @@ class AvatarRenderer(QWidget):
 
     def _get_current_pixmap(self):
         state = self.audio_state
-        frame = self._anim_frame
+        frame = self._anim_frame  # Принимает значения 0, 1 или 2
         blink = self._blink_frame
-
+        
         # РЕЖИМ РЕДАКТОРА
         if state == "editor":
             if hasattr(self.window(), 'timeline_panel'):
                 key = self.window().timeline_panel.selected_key
-                # Если выбран ключ эффекта fx_, аватар должен показывать базовый кадр покоя, чтобы мы видели наложение!
                 if key.startswith("fx_"):
                     key = "idle_close_1"
                 path = self.layers.get(key)
@@ -155,39 +169,57 @@ class AvatarRenderer(QWidget):
                     if not pix.isNull():
                         return pix
             return None
-
+        
+        # СОСТОЯНИЕ: МОРГАНИЕ
         if blink:
-            if state == "shout": key = "shout_blink"; fallback = "talk_blink"
-            elif state == "talk": key = "talk_blink"; fallback = "idle_close_3"
-            elif state == "sleep": key = "sleep_close_3"; fallback = "idle_close_3"
-            else: key = "idle_close_3"; fallback = "idle_close_1"
+            if state == "shout": 
+                key = "shout_blink"
+                fallback = "talk_blink"
+            elif state == "talk": 
+                key = "talk_blink"
+                fallback = "idle_close_3"
+            elif state == "sleep": 
+                key = "sleep_close_3"
+                fallback = "idle_close_3"
+            else: 
+                key = "idle_close_3"
+                fallback = "idle_close_1"
             path = self.layers.get(key) or self.layers.get(fallback)
             if path:
                 pix = QPixmap(path)
-                if not pix.isNull(): return pix
-
+                if not pix.isNull(): 
+                    return pix
+        
+        # СОСТОЯНИЕ: СОН (AFK)
         if state == "sleep":
-            sleep_keys = ["sleep_close_1", "sleep_close_2"]
+            # Циклически перебираем 3 кадра сна: 1, 2, 3
+            sleep_keys = ["sleep_close_1", "sleep_close_2", "sleep_close_3"]
             key = sleep_keys[frame]
-            path = self.layers.get(key)
+            path = self.layers.get(key) or self.layers.get("sleep_close_1")
             if path:
                 pix = QPixmap(path)
-                if not pix.isNull(): return pix
+                if not pix.isNull(): 
+                    return pix
             return None
-
+        
+        # БАГ ИСПРАВЛЕН: Логика выбора кадров переписана под 3-кадровую анимацию
         if state == "shout":
-            key = "shout_open" if frame == 0 else "shout_close"
-            fallback = "talk_open" if frame == 0 else "talk_close"
+            shout_keys = ["shout_open", "shout_close", "shout_open"]
+            key = shout_keys[frame]
+            fallback = "talk_open"
         elif state == "talk":
-            key = "talk_open" if frame == 0 else "talk_close"
+            talk_keys = ["talk_open", "talk_close", "talk_open"]
+            key = talk_keys[frame]
             fallback = "idle_close_1"
         else:
-            idle_keys = ["idle_close_1", "idle_close_2"]
+            # Обычный покой (Idle): честно перебираем idle_close_1, idle_close_2, idle_close_3
+            idle_keys = ["idle_close_1", "idle_close_2", "idle_close_3"]
             key = idle_keys[frame]
             fallback = "idle_close_1"
-
+        
         path = self.layers.get(key) or self.layers.get(fallback)
         if path:
             pix = QPixmap(path)
-            if not pix.isNull(): return pix
+            if not pix.isNull(): 
+                return pix
         return None

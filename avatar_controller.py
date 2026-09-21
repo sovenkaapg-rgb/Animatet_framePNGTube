@@ -5,7 +5,7 @@ class AvatarController:
         self.avatar = avatar_render
         self.timeline = timeline_panel
         self.mixer = mixer_panel
-
+        
         # Системные переменные плавности
         self.silence_counter = 0
         self.current_talk_duration = 0
@@ -22,58 +22,59 @@ class AvatarController:
                 self.avatar.audio_state = "editor"
                 self.avatar.update()
             return
-
+        
         # 2. Режим СТРИМА
         target_state = "idle"
         ticks_to_sleep_dynamic = config.afk_time_to_sleep * 33
-
+        
+        # БАГ ИСПРАВЛЕН: Переводим сырые значения слайдеров инерции в реальные тики (1 тик ≈ 30мс).
+        # Теперь аватар мгновенно закрывает рот, а задержка соответствует выбранным секундам.
+        MIN_SHOUT_TICKS = max(2, int(config.shout_inertia / 3))  
+        MIN_TALK_TICKS = max(2, int(config.talk_inertia / 15))    
+        
         if vol > thresh_shout:
-            # СЕЙЧАС КРИЧИТ
             target_state = "shout"
             self.current_shout_duration += 1
             self.current_talk_duration = 0
             self.silence_counter = 0
-            self.post_shout_hold_timer = 0
             
-            if self.current_shout_duration > 13:
-                self.shout_hold_timer = config.shout_inertia
+            if self.current_shout_duration > 10:
+                self.shout_hold_timer = MIN_SHOUT_TICKS + 4
             else:
-                self.shout_hold_timer = max(2, config.shout_inertia // 4)
-
+                self.shout_hold_timer = MIN_SHOUT_TICKS
+                
+            self.post_shout_hold_timer = 4 
+            
         elif vol > thresh_talk:
-            # ГОВОРИТ
-            target_state = "talk"
-            self.current_talk_duration += 1
-            self.current_shout_duration = 0
-            self.silence_counter = 0
-            self.post_shout_hold_timer = 0
-            
-            if self.current_talk_duration > 16:
-                self.talk_hold_timer = config.talk_inertia * 2
+            if self.shout_hold_timer > 0:
+                target_state = "shout"
+                self.shout_hold_timer -= 1
             else:
-                self.talk_hold_timer = config.talk_inertia
-
+                target_state = "talk"
+                self.current_talk_duration += 1
+                self.current_shout_duration = 0
+                self.silence_counter = 0
+                self.post_shout_hold_timer = 0
+                
+                if self.current_talk_duration > 12:
+                    self.talk_hold_timer = MIN_TALK_TICKS * 2
+                else:
+                    self.talk_hold_timer = MIN_TALK_TICKS
         else:
-            # ТИШИНА
+            # Зона тишины — отрабатываем таймеры удержания по приоритету
             self.current_talk_duration = 0
             self.current_shout_duration = 0
             
-            if self.post_shout_hold_timer > 0:
-                target_state = "shout"
-                self.post_shout_hold_timer -= 1
-                self.shout_hold_timer = 0
-                self.talk_hold_timer = 0
-                
-            elif self.shout_hold_timer > 0:
+            if self.shout_hold_timer > 0:
                 target_state = "shout"
                 self.shout_hold_timer -= 1
-                
+            elif self.post_shout_hold_timer > 0:
+                target_state = "talk" 
+                self.post_shout_hold_timer -= 1
             elif self.talk_hold_timer > 0:
                 target_state = "talk"
                 self.talk_hold_timer -= 1
-                
             else:
-                # Вся инерция вышла — считаем время до сна
                 if self.avatar.audio_state == "sleep":
                     target_state = "sleep"
                     self.silence_counter = ticks_to_sleep_dynamic
@@ -83,8 +84,8 @@ class AvatarController:
                         target_state = "sleep"
                     else:
                         target_state = "idle"
-
-        # Применяем вычисленный кадр и сбрасываем счетчик при пробуждении
+        
+        # Обновляем состояние аватара только при реальной смене фазы
         if self.avatar.audio_state != target_state:
             if target_state in ["talk", "shout", "idle"]:
                 self.silence_counter = 0

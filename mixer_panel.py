@@ -7,6 +7,13 @@ class MixerPanel(QFrame):
         super().__init__()
         self.audio = audio_system
         self.init_ui()
+        
+        # ИСПРАВЛЕНО: Связываем ползунки с аудиосистемой для управления порогами речи/крика
+        self.slider_talk.valueChanged.connect(self.audio.set_threshold)
+        self.slider_shout.valueChanged.connect(self.audio.set_shout_threshold)
+        
+        # ИСПРАВЛЕНО: Подписываем визуализатор на события изменения громкости
+        self.audio.volume_changed.connect(self.on_volume_received)
 
     def init_ui(self):
         mixer_layout = QHBoxLayout(self)
@@ -79,12 +86,17 @@ class MixerPanel(QFrame):
             self.audio.gain = gain_factor
         self.lbl_gain_val.setText(f"<center><span style='color: #b88eff; font-size: 8px;'>х{gain_factor:.1f}</span></center>")
 
+    def on_volume_received(self, vol):
+        """Промежуточный слот для сбора актуальных порогов и вызова отрисовки"""
+        self.update_volume_display(vol, self.audio.volume_threshold, self.audio.shout_threshold)
+
     def update_volume_display(self, vol, thresh_talk, thresh_shout):
         """Обновление прыгающего столбика звука в виде оранжевых пиксельных кубиков"""
         bar_value = int(vol * 250)
         self.vol_bar.setValue(min(100, bar_value))
         
-        # Ползунок звука теперь всегда заполняется пиксельными кубиками с оранжевым свечением
+        # ИСПРАВЛЕНО: Корректный вертикальный градиент (from bottom to top) 
+        # с четкими границами для эффекта пиксельных кубиков
         self.vol_bar.setStyleSheet("""
             QProgressBar { 
                 background-color: #111114; 
@@ -92,7 +104,7 @@ class MixerPanel(QFrame):
                 border-radius: 2px; 
             } 
             QProgressBar::chunk { 
-                background-image: repeating-linear-gradient(0deg, #ff5500, #ff5500 8px, #111114 8px, #111114 11px);
-                border-radius: 1px;
+                background-color: #ff5500;
+                background-image: repeating-linear-gradient(to top, #ff5500, #ff5500 6px, #111114 6px, #111114 9px);
             }
         """)

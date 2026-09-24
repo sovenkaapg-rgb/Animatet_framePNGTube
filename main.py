@@ -51,9 +51,20 @@ class MainWindow(QMainWindow):
             self.box_microphones.addItem(name, idx)
         self.box_microphones.blockSignals(False)
         
-        if mics:
-            self.audio_system.change_microphone(mics[0][1], mics[0][0])
+        # Безопасно подключаем сигнал изменения (чтобы не было дублирования)
+        try:
+            self.box_microphones.currentIndexChanged.disconnect()
+        except:
+            pass
+        self.box_microphones.currentIndexChanged.connect(self.on_microphone_changed)
         
+        # ИСПРАВЛЕНО: Строго проверяем наличие элементов и передаем конкретный ID [0][1] и Имя [0][0]
+        if mics and len(mics) > 0:
+            default_mic_id = mics[0][1]
+            default_mic_name = mics[0][0]
+            self.audio_system.change_microphone(default_mic_id, default_mic_name)
+        
+        # Таймер только для логики аватара
         self.audio_timer = QTimer(self)
         self.audio_timer.timeout.connect(self.process_audio_tick)
         self.audio_timer.start(30)
@@ -68,18 +79,27 @@ class MainWindow(QMainWindow):
         current_vol = self.audio_system.current_volume
         talk_slider = self.mixer_panel.slider_talk.value()
         shout_slider = self.mixer_panel.slider_shout.value()
+        
+        # Обновляем пороги
         self.audio_system.set_threshold(talk_slider)
         self.audio_system.set_shout_threshold(shout_slider)
         
         thresh_talk = self.audio_system.volume_threshold
         thresh_shout = self.audio_system.shout_threshold
         
-        self.mixer_panel.update_volume_display(current_vol, thresh_talk, thresh_shout)
-        
+        # ИСПРАВЛЕНО: Убрали отсюда апдейт vol_bar, так как он зацикливал отрисовку интерфейса.
+        # Теперь здесь только логика состояний аватара!
         if not self.is_stream_mode:
             self.avatar_render.audio_state = "editor"
         else:
             self.avatar_controller.update_frame_logic(current_vol, thresh_talk, thresh_shout, self.is_stream_mode)
+
+    def on_microphone_changed(self, index):
+        if index >= 0:
+            mic_name = self.box_microphones.itemText(index)
+            mic_id = self.box_microphones.itemData(index)
+            self.audio_system.change_microphone(mic_id, mic_name)
+
 
     def reset_all_database_prompt(self):
         if QMessageBox.question(self, "Сброс", "Стереть все кастомные скины и эффекты?",
